@@ -17,8 +17,9 @@ webpush.setVapidDetails(
   process.env.VAPID_PRIVATE_KEY
 );
 
-// Store subscriptions (in production, use a database)
+// Store subscriptions and scheduled notifications (in production, use a database)
 let subscriptions = [];
+let scheduledNotifications = new Map(); // Map of timeoutId -> notification details
 
 // Routes
 app.get('/vapid-public-key', (req, res) => {
@@ -154,6 +155,114 @@ app.post('/schedule-notification', async (req, res) => {
     message: 'Notification scheduled successfully',
     scheduledFor: scheduleDate.toISOString(),
     delay: `${Math.round(delay / 1000)} seconds`
+  });
+});
+
+// Bulk schedule notifications endpoint
+app.post('/schedule-bulk', async (req, res) => {
+  const { notifications } = req.body;
+  
+  if (!Array.isArray(notifications)) {
+    return res.status(400).json({ error: 'notifications must be an array' });
+  }
+  
+  const results = [];
+  const now = new Date();
+  
+  for (const notif of notifications) {
+    const { id, title, body, scheduledTime, blockId, isEarlyWarning } = notif;
+    const scheduleDate = new Date(scheduledTime);
+    const delay = scheduleDate.getTime() - now.getTime();
+    
+    if (delay <= 0) {
+      results.push({ id, error: 'Scheduled time must be in the future', scheduledTime });
+      continue;
+    }
+    
+    // Schedule the notification
+    const timeoutId = setTimeout(async () => {
+      const payload = JSON.stringify({
+        title: title || 'Time Diet Reminder',
+        body: body || 'Time to start your next block!',
+        icon: '/pwa-192x192.png',
+        badge: '/pwa-192x192.png',
+        data: { blockId, type: isEarlyWarning ? 'early-warning' : 'time-block', id }
+      });
+      
+      console.log(`🔔 Sending scheduled notification: ${title}`);
+      
+      const promises = subscriptions.map((subscription, index) => {
+        return webpush.sendNotification(subscription, payload)
+          .then(() => {
+            console.log(`✓ Scheduled notification sent to subscription ${index + 1}`);
+            return { success: true };
+          })
+          .catch(error => {
+            console.error(`✗ Failed to send scheduled notification:`, error.message);
+            
+            if (error.statusCode === 410 || error.statusCode === 404) {
+              subscriptions = subscriptions.filter(sub => sub.endpoint !== subscription.endpoint);
+            }
+            
+            return { success: false, error: error.message };
+          });
+      });
+      
+      await Promise.all(promises);
+      scheduledNotifications.delete(timeoutId);
+      console.log(`📱 Scheduled notification completed: ${title}`);
+    }, delay);
+    
+    // Store the scheduled notification details
+    scheduledNotifications.set(timeoutId, {
+      id,
+      title,
+      body,
+      scheduledTime: scheduleDate.toISOString(),
+      blockId,
+      isEarlyWarning
+    });
+    
+    results.push({
+      id,
+      message: 'Notification scheduled successfully',
+      scheduledFor: scheduleDate.toISOString(),
+      delay: `${Math.round(delay / 1000)} seconds`
+    });
+  }
+  
+  console.log(`📅 Bulk scheduled ${results.length} notifications`);
+  res.json({ 
+    message: `${results.length} notifications processed`,
+    results,
+    totalScheduled: scheduledNotifications.size
+  });
+});
+
+// Clear all scheduled notifications
+app.post('/clear-scheduled', (req, res) => {
+  let clearedCount = 0;
+  
+  for (const [timeoutId, notification] of scheduledNotifications) {
+    clearTimeout(timeoutId);
+    clearedCount++;
+  }
+  
+  scheduledNotifications.clear();
+  
+  console.log(`🗑️ Cleared ${clearedCount} scheduled notifications`);
+  res.json({ 
+    message: `Cleared ${clearedCount} scheduled notifications`,
+    clearedCount
+  });
+});
+
+// Get scheduled notifications status
+app.get('/scheduled', (req, res) => {
+  const scheduled = Array.from(scheduledNotifications.values());
+  res.json({
+    count: scheduled.length,
+    notifications: scheduled
   });
 });
 
