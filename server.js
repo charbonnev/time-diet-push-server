@@ -60,14 +60,30 @@ app.post('/send-notification', async (req, res) => {
 
   console.log(`Sending notification to ${subscriptions.length} subscribers:`, { title, body });
 
-  const promises = subscriptions.map(subscription => {
+  const promises = subscriptions.map((subscription, index) => {
+    console.log(`Sending to subscription ${index + 1}/${subscriptions.length}`);
     return webpush.sendNotification(subscription, payload)
+      .then(() => {
+        console.log(`✓ Notification sent successfully to subscription ${index + 1}`);
+        return { success: true, subscription };
+      })
       .catch(error => {
-        console.error('Error sending notification:', error);
+        console.error(`✗ Failed to send to subscription ${index + 1}:`, error.message);
+        console.error('Full error details:', {
+          statusCode: error.statusCode,
+          body: error.body,
+          headers: error.headers,
+          endpoint: subscription.endpoint
+        });
+        
         // Remove invalid subscriptions
-        if (error.statusCode === 410) {
+        if (error.statusCode === 410 || error.statusCode === 404) {
+          console.log('Removing invalid subscription');
           subscriptions = subscriptions.filter(sub => sub.endpoint !== subscription.endpoint);
+          return { success: false, subscription, removed: true };
         }
+        
+        return { success: false, subscription, error: error.message };
       });
   });
 
@@ -105,13 +121,28 @@ app.post('/schedule-notification', async (req, res) => {
       data: { blockId, type: 'time-block' }
     });
     
-    const promises = subscriptions.map(subscription => {
+    const promises = subscriptions.map((subscription, index) => {
+      console.log(`Sending scheduled notification to subscription ${index + 1}/${subscriptions.length}`);
       return webpush.sendNotification(subscription, payload)
+        .then(() => {
+          console.log(`✓ Scheduled notification sent successfully to subscription ${index + 1}`);
+          return { success: true };
+        })
         .catch(error => {
-          console.error('Error sending scheduled notification:', error);
-          if (error.statusCode === 410) {
+          console.error(`✗ Failed to send scheduled notification to subscription ${index + 1}:`, error.message);
+          console.error('Scheduled notification error details:', {
+            statusCode: error.statusCode,
+            body: error.body,
+            headers: error.headers,
+            endpoint: subscription.endpoint
+          });
+          
+          if (error.statusCode === 410 || error.statusCode === 404) {
+            console.log('Removing invalid subscription from scheduled notification');
             subscriptions = subscriptions.filter(sub => sub.endpoint !== subscription.endpoint);
           }
+          
+          return { success: false, error: error.message };
         });
     });
     
@@ -139,4 +170,15 @@ app.get('/subscriptions', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Push notification server running on port ${PORT}`);
   console.log(`📱 VAPID Public Key: ${process.env.VAPID_PUBLIC_KEY}`);
+  console.log(`🔑 VAPID Private Key: ${process.env.VAPID_PRIVATE_KEY ? 'SET' : 'MISSING'}`);
+  console.log(`📧 VAPID Email: ${process.env.VAPID_EMAIL}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  
+  // Validate VAPID keys
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
+    console.error('❌ MISSING VAPID KEYS! Push notifications will not work.');
+    console.error('Please set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY environment variables.');
+  } else {
+    console.log('✅ VAPID keys configured successfully');
+  }
 });
