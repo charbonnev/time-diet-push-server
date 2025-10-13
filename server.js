@@ -170,7 +170,7 @@ app.post('/schedule-bulk', async (req, res) => {
   const now = new Date();
   
   for (const notif of notifications) {
-    const { id, title, body, scheduledTime, blockId, isEarlyWarning } = notif;
+    const { id, title, body, scheduledTime, blockId, isEarlyWarning, date, notificationType } = notif;
     const scheduleDate = new Date(scheduledTime);
     const delay = scheduleDate.getTime() - now.getTime();
     
@@ -186,7 +186,8 @@ app.post('/schedule-bulk', async (req, res) => {
         body: body || 'Time to start your next block!',
         icon: '/pwa-192x192.png',
         badge: '/pwa-192x192.png',
-        data: { blockId, type: isEarlyWarning ? 'early-warning' : 'time-block', id }
+        notificationType: notificationType || (isEarlyWarning ? 'early-warning' : 'block-start'),
+        data: { blockId, date, type: isEarlyWarning ? 'early-warning' : 'time-block', id }
       });
       
       console.log(`🔔 Sending scheduled notification: ${title}`);
@@ -220,7 +221,9 @@ app.post('/schedule-bulk', async (req, res) => {
       body,
       scheduledTime: scheduleDate.toISOString(),
       blockId,
-      isEarlyWarning
+      isEarlyWarning,
+      date,
+      notificationType: notificationType || (isEarlyWarning ? 'early-warning' : 'block-start')
     });
     
     results.push({
